@@ -1,61 +1,102 @@
 package main
-
 import (
     "encoding/json"
     "fmt"
     "net/http"
+	"path/filepath"
+
+    "github.com/pborman/uuid"
+)
+
+var (
+    mediaTypes = map[string]string{
+        ".jpeg": "image",
+        ".jpg":  "image",
+        ".gif":  "image",
+        ".png":  "image",
+        ".mov":  "video",
+        ".mp4":  "video",
+        ".avi":  "video",
+        ".flv":  "video",
+        ".wmv":  "video",
+    }
 )
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
     // Parse from body of request to get a json object.
-    fmt.Println("Received one post request")
+    // fmt.Println("Received one post request")
+    // decoder := json.NewDecoder(r.Body)
+    // var p Post
+    // if err := decoder.Decode(&p); err != nil {
+    //     panic(err)
 
-    w.Header().Set("Access-Control-Allow-Origin", "*")
-    w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization") // CROS handling??
-
-    if r.Method == "OPTIONS" { // ??
-        return
-    }
-
-    decoder := json.NewDecoder(r.Body)
-    var p Post
-    if err := decoder.Decode(&p); err != nil { // &p ?? 
-        panic(err)
-    }
-
-    fmt.Fprintf(w, "Post received: %s\n", p.Message)
-}
-
-func searchHandler(w http.ResponseWriter, r *http.Request) {
-    fmt.Println("Received one request for search")
+    fmt.Println("Received one upload request")
 
     w.Header().Set("Access-Control-Allow-Origin", "*")
     w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
-    w.Header().Set("Content-Type", "application/json")
 
     if r.Method == "OPTIONS" {
         return
     }
 
-    user := r.URL.Query().Get("user") // 像Servlet里面去拿query的parameter
-    keywords := r.URL.Query().Get("keywords") // 类似getParam 
+    p := Post{      // only specify below, others empty by default
+        Id: uuid.New(),
+        User: r.FormValue("user"),
+        Message: r.FormValue("message"),
+    }
 
+    file, header, err := r.FormFile("media_file")   // 读的content in file, other data in header
+    // 现在还在uploadHandler这里，根本没送给GCS
+    // media_file就是比如dog.jpeg
+    if err != nil {
+        http.Error(w, "Media file is not available", http.StatusBadRequest)
+        fmt.Printf("Media file is not available %v\n", err)
+        return
+    }
+
+    suffix := filepath.Ext(header.Filename) // 得到file的扩展名 比如jpg, png这些，和map比对
+    // 如果是jpg/jpeg就是img, 然后还有video
+    if t, ok := mediaTypes[suffix]; ok {
+        p.Type = t
+    } else {
+        p.Type = "unknown"
+    }
+
+    err = savePost(&p, file)    // input是post and file
+    if err != nil {
+        http.Error(w, "Failed to save post to GCS or Elasticsearch", http.StatusInternalServerError)
+        fmt.Printf("Failed to save post to GCS or Elasticsearch %v\n", err)
+        return
+    }
+
+    // fmt.Fprintf(w, "Post received: %s\n", p.Message)
+    fmt.Println("Post is saved successfully.")
+}
+
+func searchHandler(w http.ResponseWriter, r *http.Request) {
+    fmt.Println("Received one request for search")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+    // 这里的Header()指的是HTTP query header
+    w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
+    w.Header().Set("Content-Type", "application/json")
+    if r.Method == "OPTIONS" {
+        return
+    }
+    user := r.URL.Query().Get("user")
+    keywords := r.URL.Query().Get("keywords")
     var posts []Post
     var err error
-    if user != "" { // empty string 相当于 zero value
-        posts, err = searchPostsByUser(user)    // 有user的话就按照user搜索，没有user才按照keywords
+    if user != "" {
+        posts, err = searchPostsByUser(user)
     } else {
         posts, err = searchPostsByKeywords(keywords)
     }
-
     if err != nil {
         http.Error(w, "Failed to read post from Elasticsearch", http.StatusInternalServerError)
         fmt.Printf("Failed to read post from Elasticsearch %v.\n", err)
         return
     }
-
-    js, err := json.Marshal(posts)  // js就是json格式的result, Marshal == marsh 意思是deserialize结果
-                                    // 得到json string
+    js, err := json.Marshal(posts)
     if err != nil {
         http.Error(w, "Failed to parse posts into JSON format", http.StatusInternalServerError)
         fmt.Printf("Failed to parse posts into JSON format %v.\n", err)
@@ -63,3 +104,4 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
     }
     w.Write(js)
 }
+

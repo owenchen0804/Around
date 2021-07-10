@@ -29,3 +29,22 @@ func readFromES(query elastic.Query, index string) (*elastic.SearchResult, error
 
     return searchResult, nil
 }
+
+func saveToES(i interface{}, index string, id string) error{
+    // id string是GCS assign的id, index是POST/USER INDEX
+    // i是个interface, 里面没有东西，所以可以是任何class, any class implements empty interface
+    // 表示任何type的数据，相当于某个Java object
+    client, err := elastic.NewClient(
+        elastic.SetURL(ES_URL),
+        elastic.SetBasicAuth("elastic", "12345678"))
+    if err != nil {
+        return err
+    }
+
+    _, err = client.Index().    // 拿到index
+        Index(index).   // 写到index
+        Id(id).     // 拿到Id
+        BodyJson(i).    // 把object存成json
+        Do(context.Background())
+    return err
+}
